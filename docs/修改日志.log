@@ -194,3 +194,19 @@ jeecg-boot-starter-ai/src/test/java/org/jeecg/ai/handler/LLMHandlerQwenImageTest
 -- author:scott---date:20260810--for: 图片模型测试连接参数迁移至Airag模块 ---
 jeecg-boot-starter-ai/src/main/java/org/jeecg/ai/handler/LLMHandler.java
 -- author:scott---date:20260810--for: 图片模型测试连接参数迁移至Airag模块 ---
+
+-- author:scott---date:20260810--for: 修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400 ---
+jeecg-boot-starter-ai/src/main/java/org/jeecg/ai/handler/LLMHandler.java
+jeecg-boot-starter-ai/src/main/java/org/jeecg/ai/stream/InternalTokenStream.java
+jeecg-boot-starter-ai/src/test/java/org/jeecg/ai/stream/InternalTokenStreamSanitizeTest.java (+)
+-- author:scott---date:20260810--for: 修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400 ---
+
+-- author:scott---date:20260810--for: 非流式工具调用补空字符串时保留thinking，避免DeepSeek推理模型下一轮请求缺reasoning_content报400 ---
+jeecg-boot-starter-ai/src/main/java/org/jeecg/ai/handler/LLMHandler.java
+-- author:scott---date:20260810--for: 非流式工具调用补空字符串时保留thinking，避免DeepSeek推理模型下一轮请求缺reasoning_content报400 ---
+
+-- author:scott---date:20260810--for: 【issues/9790】修复跨轮历史中assistant残留tool_calls但tool结果不足，导致报"An assistant message with tool_calls must be followed by tool messages" ---
+jeecg-boot-starter-ai/src/main/java/org/jeecg/ai/stream/InternalTokenStream.java
+jeecg-boot-starter-ai/src/main/java/org/jeecg/ai/handler/LLMHandler.java
+jeecg-boot-starter-ai/src/test/java/org/jeecg/ai/stream/InternalTokenStreamSanitizeTest.java
+-- author:scott---date:20260810--for: 【issues/9790】修复跨轮历史中assistant残留tool_calls但tool结果不足，导致报"An assistant message with tool_calls must be followed by tool messages" ---

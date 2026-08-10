@@ -58,6 +58,7 @@ import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.util.*;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 /**
@@ -193,8 +194,12 @@ public class LLMHandler {
         while (true) {
             ChatRequest.Builder requestBuilder = ChatRequest.builder()
                     //update-begin---wangshuai---date:20260413  for：[issue/1560]/[issues/9527]AI应用调用千问qwen-plus 大模型 提示messages and prompt must not all null #18-----------
-                    .messages(org.jeecg.ai.stream.InternalTokenStream.reinjectUserMessageIfEvicted(
-                            chatMessage.chatMemory.messages(), currentTurnUserMessage));
+                    //update-begin---author:scott ---date:20260810  for：修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400-----------
+                    // 发送前兜底：清洗工具调用消息组（剥离无结果的tool_calls、剔除孤儿tool消息）
+                    .messages(org.jeecg.ai.stream.InternalTokenStream.sanitizeToolMessages(
+                            org.jeecg.ai.stream.InternalTokenStream.reinjectUserMessageIfEvicted(
+                            chatMessage.chatMemory.messages(), currentTurnUserMessage)));
+                    //update-end---author:scott ---date:20260810  for：修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400-----------
                     //update-end---wangshuai---date:20260413  for：[issue/1560]/[issues/9527]AI应用调用千问qwen-plus 大模型 提示messages and prompt must not all null #18-----------
 
             // 判断模型是否支持工具调用
@@ -213,8 +218,22 @@ public class LLMHandler {
             AiMessage aiMessage = response.aiMessage();
             // 部分 API 不接受 content 为 null 的 AiMessage，对含工具调用但无文本的消息补空字符串
             if (aiMessage.hasToolExecutionRequests() && aiMessage.text() == null) {
-                aiMessage = AiMessage.from("", aiMessage.toolExecutionRequests());
+                //update-begin---author:scott ---date:20260810  for：非流式工具调用补空字符串时保留thinking，避免DeepSeek推理模型下一轮请求缺reasoning_content报400-----------
+                aiMessage = AiMessage.builder()
+                        .text("")
+                        .thinking(aiMessage.thinking())
+                        .toolExecutionRequests(aiMessage.toolExecutionRequests())
+                        .attributes(aiMessage.attributes())
+                        .build();
+                //update-end---author:scott ---date:20260810  for：非流式工具调用补空字符串时保留thinking，避免DeepSeek推理模型下一轮请求缺reasoning_content报400-----------
             }
+            //update-begin---author:scott ---date:20260810  for：修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400-----------
+            // 工具调用组(1条AiMessage + N条tool结果)入列前先扩容窗口，
+            // 防止窗口按条淘汰时从中间拆散消息组、残留孤儿tool消息
+            if (aiMessage.hasToolExecutionRequests()) {
+                chatMessage.chatMemoryMaxMessages.addAndGet(1 + aiMessage.toolExecutionRequests().size());
+            }
+            //update-end---author:scott ---date:20260810  for：修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400-----------
             chatMessage.chatMemory.add(aiMessage);
 
             // 没有工具调用，则解析文本并结束
@@ -329,7 +348,10 @@ public class LLMHandler {
                 toolSpecifications,
                 toolExecutors,
                 chatMessage.chatMemory,
-                chatMessage.augmentationResult != null ? chatMessage.augmentationResult.contents() : null
+                chatMessage.augmentationResult != null ? chatMessage.augmentationResult.contents() : null,
+                //update-begin---author:scott ---date:20260810  for：修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400-----------
+                chatMessage.chatMemoryMaxMessages
+                //update-end---author:scott ---date:20260810  for：修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400-----------
         );
         //update-end---author:wangshuai---date:2025-12-18---for:【QQYUN-14048】【AI】langchain4j 升级到1.9.1---
     }
@@ -551,6 +573,11 @@ public class LLMHandler {
         if (null != params.getMaxMsgNumber()) {
             maxMsgNumber = params.getMaxMsgNumber() + 2;
         }
+        //update-begin---author:scott ---date:20260810  for：修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400-----------
+        // 窗口大小改为动态持有：工具调用组(1条AiMessage+N条tool结果)入列前按需扩容，
+        // 避免固定窗口按条淘汰时拆散消息组、残留孤儿tool消息导致DeepSeek/OpenAI报400
+        AtomicInteger chatMemoryMaxMessages = new AtomicInteger(maxMsgNumber);
+        //update-end---author:scott ---date:20260810  for：修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400-----------
 
 
         // 系统消息
@@ -570,7 +597,11 @@ public class LLMHandler {
         });
 
         // 消息缓存
-        ChatMemory chatMemory = MessageWindowChatMemory.builder().maxMessages(maxMsgNumber).build();
+        //update-begin---author:scott ---date:20260810  for：修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400-----------
+        ChatMemory chatMemory = MessageWindowChatMemory.builder()
+                .dynamicMaxMessages(id -> chatMemoryMaxMessages.get())
+                .build();
+        //update-end---author:scott ---date:20260810  for：修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400-----------
 
         // 添加系统消息到
         if (null != systemMessageAto.get()) {
@@ -604,7 +635,7 @@ public class LLMHandler {
         }
         // 用户消息
         chatMemory.add(userMessage);
-        return new CollateMsgResp(chatMemory, augmentationResult, userMessage);
+        return new CollateMsgResp(chatMemory, augmentationResult, userMessage, chatMemoryMaxMessages);
     }
 
     /**
@@ -672,11 +703,16 @@ public class LLMHandler {
         public final ChatMemory chatMemory;
         public final AugmentationResult augmentationResult;
         public final UserMessage userMessage;
+        //update-begin---author:scott ---date:20260810  for：修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400-----------
+        /** ChatMemory 窗口大小持有者：工具调用组入列前按需扩容 */
+        public final AtomicInteger chatMemoryMaxMessages;
+        //update-end---author:scott ---date:20260810  for：修复工具调用组被消息窗口淘汰拆散，残留孤儿tool消息导致DeepSeek报400-----------
 
-        public CollateMsgResp(ChatMemory chatMemory, AugmentationResult augmentationResult, UserMessage userMessage) {
+        public CollateMsgResp(ChatMemory chatMemory, AugmentationResult augmentationResult, UserMessage userMessage, AtomicInteger chatMemoryMaxMessages) {
             this.chatMemory = chatMemory;
             this.augmentationResult = augmentationResult;
             this.userMessage = userMessage;
+            this.chatMemoryMaxMessages = chatMemoryMaxMessages;
         }
 
         @Override
