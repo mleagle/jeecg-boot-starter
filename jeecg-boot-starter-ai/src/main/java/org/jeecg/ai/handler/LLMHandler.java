@@ -72,6 +72,7 @@ public class LLMHandler {
 	private static final String QWEN_IMAGE_3_MODEL_PREFIX = "qwen-image-3";
 	private static final int QWEN_IMAGE_3_MAX_OUTPUT_COUNT = 6;
 	private static final int QWEN_IMAGE_3_MAX_INPUT_COUNT = 3;
+	private static final String QWEN_PROMPT_EXTEND_PARAM = "prompt_extend";
 	private static final String DASHSCOPE_COMPATIBLE_MODE_PATH = "/compatible-mode/v1";
 	private static final String DASHSCOPE_NATIVE_API_PATH = "/api/v1";
 	private static final String DASHSCOPE_MULTIMODAL_SERVICE_PATH = "/services/aigc/multimodal-generation/generation";
@@ -744,7 +745,7 @@ public class LLMHandler {
 	 * @author scott
 	 * @since 2026-08-07 【无号】限定Qwen Image 3多模态路由范围
 	 */
-	static boolean isQwenImage3Model(String provider, String modelName) {
+	public static boolean isQwenImage3Model(String provider, String modelName) {
 		if (!AiModelFactory.AIMODEL_TYPE_QWEN.equalsIgnoreCase(provider) || StringUtils.isEmpty(modelName)) {
 			return false;
 		}
@@ -752,58 +753,6 @@ public class LLMHandler {
 		return QWEN_IMAGE_3_MODEL_PREFIX.equals(normalizedModelName)
 				|| normalizedModelName.startsWith(QWEN_IMAGE_3_MODEL_PREFIX + ".");
 	}
-
-	//update-begin---author:claude ---date:2026-08-07  for：图片模型测试连接慢，提供测试专用的最小尺寸/最低质量参数，缩短测试耗时-----------
-	/**
-	 * 获取图片模型【测试连接】专用的最小尺寸，加快测试速度。
-	 * 返回 null 表示保持供应商默认尺寸（默认已是最小或无法安全推断）。
-	 *
-	 * @param provider 供应商
-	 * @param modelName 模型名称
-	 * @return 测试用最小尺寸
-	 */
-	public static String resolveTestImageSize(String provider, String modelName) {
-		if (StringUtils.isEmpty(provider)) {
-			return null;
-		}
-		String model = modelName == null ? "" : modelName.toLowerCase(Locale.ROOT);
-		if (AiModelFactory.AIMODEL_TYPE_OPENAI.equalsIgnoreCase(provider)) {
-			// dall-e-2 最小支持 256x256；dall-e-3 / gpt-image 系列最小为 1024x1024
-			if (model.startsWith("dall-e-2")) {
-				return "256x256";
-			}
-			return "1024x1024";
-		}
-		if (AiModelFactory.AIMODEL_TYPE_QWEN.equalsIgnoreCase(provider)) {
-			// qwen-image-3 走多模态接口，尺寸为固定支持列表，保持默认
-			if (isQwenImage3Model(provider, modelName)) {
-				return null;
-			}
-			// 万相 turbo 系列最小支持 512*512，其余保持默认 1024*1024
-			if (model.contains("turbo")) {
-				return "512*512";
-			}
-		}
-		return null;
-	}
-
-	/**
-	 * 获取图片模型【测试连接】专用的最低质量，加快测试速度。
-	 * 返回 null 表示无需传递质量参数。
-	 *
-	 * @param provider 供应商
-	 * @param modelName 模型名称
-	 * @return 测试用最低质量
-	 */
-	public static String resolveTestImageQuality(String provider, String modelName) {
-		// gpt-image 系列 low 质量可大幅缩短生成耗时（默认auto为高质量，可达60秒以上）
-		String model = modelName == null ? "" : modelName.toLowerCase(Locale.ROOT);
-		if (AiModelFactory.AIMODEL_TYPE_OPENAI.equalsIgnoreCase(provider) && model.startsWith("gpt-image")) {
-			return "low";
-		}
-		return null;
-	}
-	//update-end---author:claude ---date:2026-08-07  for：图片模型测试连接慢，提供测试专用的最小尺寸/最低质量参数，缩短测试耗时-----------
 
 	/**
 	 * 使用 DashScope 多模态接口完成 Qwen Image 3 文生图。
@@ -860,6 +809,12 @@ public class LLMHandler {
 		if (StringUtils.isNotEmpty(options.getImageSize())) {
 			paramBuilder.size(options.getImageSize());
 		}
+		//update-begin---author:scott ---date:20260810  for：【无号】支持Qwen Image 3透传prompt_extend扩展参数-----------
+		Map<String, Object> extraParams = options.getExtraParams();
+		if (extraParams != null && extraParams.get(QWEN_PROMPT_EXTEND_PARAM) instanceof Boolean promptExtend) {
+			paramBuilder.promptExtend(promptExtend);
+		}
+		//update-end---author:scott ---date:20260810  for：【无号】支持Qwen Image 3透传prompt_extend扩展参数-----------
 
 		try {
 			MultiModalConversation conversation = new MultiModalConversation(

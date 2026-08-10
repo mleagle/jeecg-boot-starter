@@ -190,3 +190,7 @@ jeecg-boot-starter-ai/src/main/java/org/jeecg/ai/handler/LLMHandler.java
 jeecg-boot-starter-ai/src/test/java/org/jeecg/ai/factory/AiModelFactoryImageSizeTest.java (+)
 jeecg-boot-starter-ai/src/test/java/org/jeecg/ai/handler/LLMHandlerQwenImageTest.java (+)
 -- author:scott---date:20260807--for: 【无号】兼容GPT Image和Qwen Image 3图片生成接口 ---
+
+-- author:scott---date:20260810--for: 图片模型测试连接参数迁移至Airag模块 ---
+jeecg-boot-starter-ai/src/main/java/org/jeecg/ai/handler/LLMHandler.java
+-- author:scott---date:20260810--for: 图片模型测试连接参数迁移至Airag模块 ---
