@@ -183,3 +183,10 @@ jeecg-boot-starter-ai/src/test/java/org/jeecg/ai/handler/SkillTest.java
 -- author:sjlei---date:20260728--for: 【LHZP-1581】修复 BeforeToolExecution / ToolExecution 缺少 invocationContext 导致工具调用过程不显示 ---
 src/main/java/org/jeecg/ai/stream/InternalTokenStream.java
 -- author:sjlei---date:20260728--for: 【LHZP-1581】修复 BeforeToolExecution / ToolExecution 缺少 invocationContext 导致工具调用过程不显示 ---
+
+-- author:scott---date:20260807--for: 【无号】兼容GPT Image和Qwen Image 3图片生成接口 ---
+jeecg-boot-starter-ai/src/main/java/org/jeecg/ai/factory/AiModelFactory.java
+jeecg-boot-starter-ai/src/main/java/org/jeecg/ai/handler/LLMHandler.java
+jeecg-boot-starter-ai/src/test/java/org/jeecg/ai/factory/AiModelFactoryImageSizeTest.java (+)
+jeecg-boot-starter-ai/src/test/java/org/jeecg/ai/handler/LLMHandlerQwenImageTest.java (+)
+-- author:scott---date:20260807--for: 【无号】兼容GPT Image和Qwen Image 3图片生成接口 ---

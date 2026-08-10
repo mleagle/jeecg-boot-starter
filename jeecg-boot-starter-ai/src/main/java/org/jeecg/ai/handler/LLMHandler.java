@@ -3,6 +3,13 @@ package org.jeecg.ai.handler;
 import com.alibaba.dashscope.aigc.imagesynthesis.ImageSynthesis;
 import com.alibaba.dashscope.aigc.imagesynthesis.ImageSynthesisParam;
 import com.alibaba.dashscope.aigc.imagesynthesis.ImageSynthesisResult;
+import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversation;
+import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversationOutput;
+import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversationParam;
+import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversationResult;
+import com.alibaba.dashscope.common.MultiModalMessage;
+import com.alibaba.dashscope.common.Role;
+import com.alibaba.dashscope.protocol.Protocol;
 import dev.langchain4j.agent.tool.ToolExecutionRequest;
 import dev.langchain4j.agent.tool.ToolSpecification;
 import dev.langchain4j.data.image.Image;
@@ -62,6 +69,13 @@ import java.util.concurrent.atomic.AtomicReference;
 @Slf4j
 public class LLMHandler {
 
+	private static final String QWEN_IMAGE_3_MODEL_PREFIX = "qwen-image-3";
+	private static final int QWEN_IMAGE_3_MAX_OUTPUT_COUNT = 6;
+	private static final int QWEN_IMAGE_3_MAX_INPUT_COUNT = 3;
+	private static final String DASHSCOPE_COMPATIBLE_MODE_PATH = "/compatible-mode/v1";
+	private static final String DASHSCOPE_NATIVE_API_PATH = "/api/v1";
+	private static final String DASHSCOPE_MULTIMODAL_SERVICE_PATH = "/services/aigc/multimodal-generation/generation";
+	private static final String DASHSCOPE_MULTIMODAL_PATH = "/aigc/multimodal-generation/generation";
 
     private AiChatProperties aiChatProperties;
 
@@ -686,6 +700,11 @@ public class LLMHandler {
         }
 
         AiModelOptions options = params.toModelOptions();
+		//update-begin---author:scott ---date:20260807  for：【无号】Qwen Image 3按供应商路由多模态接口-----------
+		if (isQwenImage3Model(options.getProvider(), options.getModelName())) {
+			return imageGenerateByQwenMultimodal(prompt, options, params.imageCount);
+		}
+		//update-end---author:scott ---date:20260807  for：【无号】Qwen Image 3按供应商路由多模态接口-----------
 
         ImageModel imageModel = AiModelFactory.createImageModel(options);
         List<Map<String,Object>> result = new ArrayList<>();
@@ -716,6 +735,237 @@ public class LLMHandler {
         return result;
     }
 
+	/**
+	 * 判断是否为需要走多模态生成接口的 Qwen Image 3 模型。
+	 *
+	 * @param provider 供应商
+	 * @param modelName 模型名称
+	 * @return 是否为 Qwen Image 3 模型
+	 * @author scott
+	 * @since 2026-08-07 【无号】限定Qwen Image 3多模态路由范围
+	 */
+	static boolean isQwenImage3Model(String provider, String modelName) {
+		if (!AiModelFactory.AIMODEL_TYPE_QWEN.equalsIgnoreCase(provider) || StringUtils.isEmpty(modelName)) {
+			return false;
+		}
+		String normalizedModelName = modelName.toLowerCase(Locale.ROOT);
+		return QWEN_IMAGE_3_MODEL_PREFIX.equals(normalizedModelName)
+				|| normalizedModelName.startsWith(QWEN_IMAGE_3_MODEL_PREFIX + ".");
+	}
+
+	//update-begin---author:claude ---date:2026-08-07  for：图片模型测试连接慢，提供测试专用的最小尺寸/最低质量参数，缩短测试耗时-----------
+	/**
+	 * 获取图片模型【测试连接】专用的最小尺寸，加快测试速度。
+	 * 返回 null 表示保持供应商默认尺寸（默认已是最小或无法安全推断）。
+	 *
+	 * @param provider 供应商
+	 * @param modelName 模型名称
+	 * @return 测试用最小尺寸
+	 */
+	public static String resolveTestImageSize(String provider, String modelName) {
+		if (StringUtils.isEmpty(provider)) {
+			return null;
+		}
+		String model = modelName == null ? "" : modelName.toLowerCase(Locale.ROOT);
+		if (AiModelFactory.AIMODEL_TYPE_OPENAI.equalsIgnoreCase(provider)) {
+			// dall-e-2 最小支持 256x256；dall-e-3 / gpt-image 系列最小为 1024x1024
+			if (model.startsWith("dall-e-2")) {
+				return "256x256";
+			}
+			return "1024x1024";
+		}
+		if (AiModelFactory.AIMODEL_TYPE_QWEN.equalsIgnoreCase(provider)) {
+			// qwen-image-3 走多模态接口，尺寸为固定支持列表，保持默认
+			if (isQwenImage3Model(provider, modelName)) {
+				return null;
+			}
+			// 万相 turbo 系列最小支持 512*512，其余保持默认 1024*1024
+			if (model.contains("turbo")) {
+				return "512*512";
+			}
+		}
+		return null;
+	}
+
+	/**
+	 * 获取图片模型【测试连接】专用的最低质量，加快测试速度。
+	 * 返回 null 表示无需传递质量参数。
+	 *
+	 * @param provider 供应商
+	 * @param modelName 模型名称
+	 * @return 测试用最低质量
+	 */
+	public static String resolveTestImageQuality(String provider, String modelName) {
+		// gpt-image 系列 low 质量可大幅缩短生成耗时（默认auto为高质量，可达60秒以上）
+		String model = modelName == null ? "" : modelName.toLowerCase(Locale.ROOT);
+		if (AiModelFactory.AIMODEL_TYPE_OPENAI.equalsIgnoreCase(provider) && model.startsWith("gpt-image")) {
+			return "low";
+		}
+		return null;
+	}
+	//update-end---author:claude ---date:2026-08-07  for：图片模型测试连接慢，提供测试专用的最小尺寸/最低质量参数，缩短测试耗时-----------
+
+	/**
+	 * 使用 DashScope 多模态接口完成 Qwen Image 3 文生图。
+	 *
+	 * @author scott
+	 * @since 2026-08-07 【无号】支持Qwen Image 3文生图
+	 */
+	private List<Map<String, Object>> imageGenerateByQwenMultimodal(String prompt, AiModelOptions options, Integer imageCount) {
+		List<Map<String, Object>> content = new ArrayList<>();
+		content.add(Collections.singletonMap("text", prompt));
+		return callQwenImageMultimodal(content, options, imageCount);
+	}
+
+	/**
+	 * 使用 DashScope 多模态接口完成 Qwen Image 3 图像编辑。
+	 *
+	 * @author scott
+	 * @since 2026-08-07 【无号】支持Qwen Image 3图像编辑
+	 */
+	private List<Map<String, Object>> imageEditByQwenMultimodal(String prompt, List<String> originalImages,
+			AiModelOptions options, Integer imageCount) {
+		if (originalImages.size() > QWEN_IMAGE_3_MAX_INPUT_COUNT) {
+			throw new IllegalArgumentException("Qwen Image 3 最多支持3张输入图片");
+		}
+
+		List<Map<String, Object>> content = new ArrayList<>();
+		for (String originalImage : originalImages) {
+			content.add(Collections.singletonMap("image", normalizeQwenImageData(originalImage)));
+		}
+		content.add(Collections.singletonMap("text", prompt));
+		return callQwenImageMultimodal(content, options, imageCount);
+	}
+
+	/**
+	 * 调用 Qwen Image 3 多模态生成接口并转换为现有图片返回协议。
+	 *
+	 * @author scott
+	 * @since 2026-08-07 【无号】支持Qwen Image 3多模态生成
+	 */
+	private List<Map<String, Object>> callQwenImageMultimodal(List<Map<String, Object>> content,
+			AiModelOptions options, Integer imageCount) {
+		AiModelFactory.assertNotEmpty("apiKey不能为空", options.getApiKey());
+		int count = normalizeQwenImageCount(imageCount);
+		MultiModalMessage userMessage = MultiModalMessage.builder()
+				.role(Role.USER.getValue())
+				.content(content)
+				.build();
+		MultiModalConversationParam.MultiModalConversationParamBuilder<?, ?> paramBuilder = MultiModalConversationParam.builder()
+				.apiKey(options.getApiKey())
+				.model(options.getModelName())
+				.messages(Collections.singletonList(userMessage))
+				.n(count)
+				.watermark(false);
+		if (StringUtils.isNotEmpty(options.getImageSize())) {
+			paramBuilder.size(options.getImageSize());
+		}
+
+		try {
+			MultiModalConversation conversation = new MultiModalConversation(
+					Protocol.HTTP.getValue(), normalizeDashScopeBaseUrl(options.getBaseUrl()));
+			MultiModalConversationResult response = conversation.call(paramBuilder.build());
+			return parseQwenImageResponse(response);
+		} catch (Exception e) {
+			throw new RuntimeException("Qwen Image 3 generation failed: " + e.getMessage(), e);
+		}
+	}
+
+	/**
+	 * 将 Qwen Image 3 响应中的图片地址转换为现有 type/value 结构。
+	 *
+	 * @author scott
+	 * @since 2026-08-07 【无号】转换Qwen Image 3响应
+	 */
+	private List<Map<String, Object>> parseQwenImageResponse(MultiModalConversationResult response) {
+		List<Map<String, Object>> result = new ArrayList<>();
+		if (response != null && response.getOutput() != null && response.getOutput().getChoices() != null) {
+			for (MultiModalConversationOutput.Choice choice : response.getOutput().getChoices()) {
+				if (choice.getMessage() == null || choice.getMessage().getContent() == null) {
+					continue;
+				}
+				for (Map<String, Object> item : choice.getMessage().getContent()) {
+					Object image = item.get("image");
+					if (image != null) {
+						result.add(toImageResult(image.toString()));
+					}
+				}
+			}
+		}
+		if (result.isEmpty()) {
+			String errorMessage = response == null ? "empty response" : response.getCode() + ": " + response.getMessage();
+			throw new IllegalStateException("Qwen Image 3 response contains no image, " + errorMessage);
+		}
+		return result;
+	}
+
+	/**
+	 * 转换单张图片为现有返回协议。
+	 *
+	 * @author scott
+	 * @since 2026-08-07 【无号】统一图片返回结构
+	 */
+	private Map<String, Object> toImageResult(String image) {
+		Map<String, Object> result = new HashMap<>();
+		if (image.startsWith("http://") || image.startsWith("https://")) {
+			result.put("type", "http");
+			result.put("value", image);
+			return result;
+		}
+
+		result.put("type", "base64");
+		result.put("value", image.startsWith("data:") ? image : "data:image/png;base64," + image);
+		return result;
+	}
+
+	/**
+	 * 补充 DashScope 接受的 Base64 Data URL 前缀。
+	 *
+	 * @author scott
+	 * @since 2026-08-07 【无号】规范Qwen Image 3输入图片
+	 */
+	private String normalizeQwenImageData(String image) {
+		return image.startsWith("data:") || image.startsWith("http://") || image.startsWith("https://")
+				? image : "data:image/png;base64," + image;
+	}
+
+	/**
+	 * DashScope SDK 会自行拼接服务路径，将配置地址归一化为原生 API 基础地址。
+	 *
+	 * @author scott
+	 * @since 2026-08-07 【无号】避免多模态接口路径重复拼接
+	 */
+	private String normalizeDashScopeBaseUrl(String baseUrl) {
+		String normalized = baseUrl;
+		while (normalized.endsWith("/")) {
+			normalized = normalized.substring(0, normalized.length() - 1);
+		}
+		if (normalized.endsWith(DASHSCOPE_MULTIMODAL_SERVICE_PATH)) {
+			normalized = normalized.substring(0, normalized.length() - DASHSCOPE_MULTIMODAL_SERVICE_PATH.length());
+		} else if (normalized.endsWith(DASHSCOPE_MULTIMODAL_PATH)) {
+			normalized = normalized.substring(0, normalized.length() - DASHSCOPE_MULTIMODAL_PATH.length());
+		}
+		if (normalized.endsWith(DASHSCOPE_COMPATIBLE_MODE_PATH)) {
+			normalized = normalized.substring(0, normalized.length() - DASHSCOPE_COMPATIBLE_MODE_PATH.length())
+					+ DASHSCOPE_NATIVE_API_PATH;
+		}
+		return normalized;
+	}
+
+	/**
+	 * 校验 Qwen Image 3 单次输出数量。
+	 *
+	 * @author scott
+	 * @since 2026-08-07 【无号】限制Qwen Image 3单次输出数量
+	 */
+	private int normalizeQwenImageCount(Integer imageCount) {
+		int count = imageCount == null || imageCount < 1 ? 1 : imageCount;
+		if (count > QWEN_IMAGE_3_MAX_OUTPUT_COUNT) {
+			throw new IllegalArgumentException("Qwen Image 3 单次最多生成6张图片");
+		}
+		return count;
+	}
+
     /**
      * 根据图片内容和提示词生成图片（目前底层仅支持千问）
      *
@@ -739,6 +989,11 @@ public class LLMHandler {
 
         AiModelOptions options = params.toModelOptions();
         Integer imageCount = params.imageCount;
+		//update-begin---author:scott ---date:20260807  for：【无号】Qwen Image 3按供应商路由多模态接口-----------
+		if (isQwenImage3Model(options.getProvider(), options.getModelName())) {
+			return imageEditByQwenMultimodal(prompt, originalImages, options, imageCount);
+		}
+		//update-end---author:scott ---date:20260807  for：【无号】Qwen Image 3按供应商路由多模态接口-----------
         //通义万象2.1和2.5走单独的配置
         if (QwenImageModelEnum.WANX_2_1_IMAGE_EDIT.getModelName().equals(options.getModelName()) || QwenImageModelEnum.WAN_2_5_I2I_PREVIEW.getModelName().equals(options.getModelName())) {
             return imageEditQwen(prompt, originalImages, options, imageCount);

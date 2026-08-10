@@ -58,6 +58,8 @@ public class AiModelFactory {
     public static final String AIMODEL_TYPE_VLLM = "VLLM";
     public static final String AIMODEL_TYPE_LMSTDIO = "LMSTDIO";
     public static final String AIMODEL_TYPE_GOOGLE = "GOOGLE";
+	private static final String GPT_IMAGE_MODEL_PREFIX = "gpt-image-";
+	private static final String GPT_IMAGE_DEFAULT_SIZE = "auto";
 
     static {
         // ZhipuAI 等 community 模型的 builder 不支持显式传入 httpClientBuilder，走 SPI 自动发现。
@@ -659,9 +661,17 @@ public class AiModelFactory {
                         .maxRetries(0)
                         .logRequests(true)
                         .logResponses(true);
-                if(StringUtils.isNotEmpty(options.getImageSize()) && ("dall-e-2".equals(options.getModelName()) || "dall-e-3".equals(options.getModelName()) || AIMODEL_TYPE_XINFERENCE.equalsIgnoreCase(options.getProvider()) || AIMODEL_TYPE_VLLM.equalsIgnoreCase(options.getProvider()) || AIMODEL_TYPE_LMSTDIO.equalsIgnoreCase(options.getProvider()))){
-                    builder.size(options.getImageSize());
-                }
+				//update-begin---author:scott ---date:20260807  for：GPT Image兼容图片尺寸参数-----------
+				String imageSize = resolveOpenAiImageSize(modelName, options.getImageSize());
+				if (StringUtils.isNotEmpty(imageSize) && isOpenAiImageSizeSupported(options.getProvider(), options.getModelName())) {
+					builder.size(imageSize);
+				}
+				//update-end---author:scott ---date:20260807  for：GPT Image兼容图片尺寸参数-----------
+				//update-begin---author:claude ---date:2026-08-07  for：图片模型测试连接慢，gpt-image系列支持quality参数，测试时用low加速-----------
+				if (StringUtils.isNotEmpty(options.getImageQuality()) && isGptImageModel(modelName)) {
+					builder.quality(options.getImageQuality());
+				}
+				//update-end---author:claude ---date:2026-08-07  for：图片模型测试连接慢，gpt-image系列支持quality参数，测试时用low加速-----------
                 builder.httpClientBuilder(pickHttpClientBuilder(options, timeout));
                 imageModel = builder.build();
                 break;
@@ -707,6 +717,47 @@ public class AiModelFactory {
         return imageModel;
     }
 
+	/**
+	 * 将平台通用图片尺寸转换为 GPT Image 支持的尺寸。
+	 *
+	 * @author scott
+	 * @since 2026-08-07 【无号】兼容GPT Image图片尺寸
+	 */
+	static String resolveOpenAiImageSize(String modelName, String imageSize) {
+		if (!isGptImageModel(modelName)) {
+			return imageSize;
+		}
+		if (StringUtils.isEmpty(imageSize)) {
+			return GPT_IMAGE_DEFAULT_SIZE;
+		}
+		return imageSize.replace('*', 'x');
+	}
+
+	/**
+	 * 判断是否为 GPT Image 系列模型。
+	 *
+	 * @author scott
+	 * @since 2026-08-07 【无号】识别GPT Image系列模型
+	 */
+	static boolean isGptImageModel(String modelName) {
+		return StringUtils.isNotEmpty(modelName)
+				&& modelName.regionMatches(true, 0, GPT_IMAGE_MODEL_PREFIX, 0, GPT_IMAGE_MODEL_PREFIX.length());
+	}
+
+	/**
+	 * 判断 OpenAI 兼容模型是否需要传递图片尺寸，保留原有模型分支。
+	 *
+	 * @author scott
+	 * @since 2026-08-07 【无号】兼容图片模型尺寸参数
+	 */
+	static boolean isOpenAiImageSizeSupported(String provider, String modelName) {
+		return isGptImageModel(modelName)
+				|| "dall-e-2".equals(modelName)
+				|| "dall-e-3".equals(modelName)
+				|| AIMODEL_TYPE_XINFERENCE.equalsIgnoreCase(provider)
+				|| AIMODEL_TYPE_VLLM.equalsIgnoreCase(provider)
+				|| AIMODEL_TYPE_LMSTDIO.equalsIgnoreCase(provider);
+	}
     /**
      * 确保对象不为空,如果为空抛出异常
      *

@@ -98,6 +98,13 @@ public class AiModelOptions {
      */
     String imageSize;
 
+    //update-begin---author:claude ---date:2026-08-07  for：图片模型测试连接慢，支持图片质量参数（如gpt-image的low），测试时用最低质量加速-----------
+    /**
+     * 图片质量（仅部分供应商支持，如gpt-image系列：low/medium/high）
+     */
+    String imageQuality;
+    //update-end---author:claude ---date:2026-08-07  for：图片模型测试连接慢，支持图片质量参数（如gpt-image的low），测试时用最低质量加速-----------
+
     /**
      * 生成图片的数量
      */
@@ -134,6 +141,7 @@ public class AiModelOptions {
                 ", enableSearch=" + enableSearch +
                 ", imageCount=" + imageCount +
                 ", imageSize=" + imageSize +
+                ", imageQuality=" + imageQuality +
                 ", izHttpVersionOne=" + izHttpVersionOne +
                 ", extraParams=" + extraParams +
                 '}';
