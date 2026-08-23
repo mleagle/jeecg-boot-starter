@@ -13,7 +13,7 @@
     <artifactId>jeecg-boot-starter</artifactId>
     <packaging>pom</packaging>
     <name>JEECG BOOT STARTER ${project.version}</name>
-    <version>3.9.4</version>
+    <version>3.9.5</version>
 
     <developers>
         <developer>
